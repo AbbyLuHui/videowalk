@@ -31,6 +31,7 @@ class CRW(nn.Module):
         self.flip = getattr(args, 'flip', False)
         self.sk_targets = getattr(args, 'sk_targets', False)
         self.vis = vis
+        self.sigmoid = nn.Sigmoid()
 
     def infer_dims(self):
         in_sz = 256
@@ -91,7 +92,7 @@ class CRW(nn.Module):
                 -- 'feats' (B x C x T x N), node embeddings
                 -- 'maps'  (B x N x C x T x H x W), node feature maps
         '''
-        B, N, C, T, h, w = x.shape
+        B, N, C, T, h, w = x.shape #[4, 49, 3, 4, 64, 64]
         maps = self.encoder(x.flatten(0, 1))
         H, W = maps.shape[-2:]
 
@@ -111,26 +112,100 @@ class CRW(nn.Module):
         feats = feats.view(B, N, feats.shape[1], T).permute(0, 2, 3, 1)
         maps  =  maps.view(B, N, *maps.shape[1:])
 
+        # feats shape [B, 128, 4, 49]
+        # maps shape [B, 49, 512, 4, 8, 8]
+
+
         return feats, maps
 
-    def forward(self, x, just_feats=False,):
+    def patch_index_to_pixel(self, i, hd, wd, hp, wp, n):
         '''
-        Input is B x T x N*C x H x W, where either
+        i, hd, wd, p, n = index, depth height, depth width, patch height, patch width, N
+        '''
+        l = n ** 0.5
+        row, col = i // l, i % l
+        gaph, gapw = (hd - hp) / (l-1), (wd - wp) / (l-1)
+        x, y = int(wp//2 + col * gapw), int(hp//2 + row * gaph)
+        return x, y
+
+    def coord_to_index(self, coord, hd, wd, hp, wp, n):
+        l = n ** 0.5
+        x,y = int(coord[0]), int(coord[1])
+        if x < 0 or y < 0 or x > wd or y > hd:
+            return -1
+        gaph, gapw = (hd - hp) / (l - 1), (wd - wp) / (l - 1)
+        row, col = int((x - wp//2) / gapw), int((y - hp//2) / gaph)
+        return int(row * l + col)
+
+
+    def forward(self, x, d=None, RT=None, K=None, just_feats=False,):
+        '''
+        Input is B x V x T x N*C x H x W, where either
            N>1 -> list of patches of images
            N=1 -> list of images
         '''
-        B, T, C, H, W = x.shape
-        _N, C = C//3, 3
+        if d!= None:
+            B, V, T, C, H, W = x.shape
+            _N, C = C//3, 3
+            Bd, Vd, Td, Hd, Wd = d.shape
+            d, RT, K = d.transpose(0,1), RT.transpose(0,1), K.transpose(0,1)
+            x = x.transpose(2, 3).view(B, V, _N, C, T, H, W).transpose(0, 1)
+            q, mm = self.pixels_to_nodes(x[0])  # q node embedding, mm node feature embedding
+            q_back, mm_back = self.pixels_to_nodes(x[1])
+            q_top, mm_top = self.pixels_to_nodes(x[2])
+        else:
+            B, T, C, H, W = x.shape
+            _N, C = C // 3, 3
+            x = x.transpose(1, 2).view(B, _N, C, T, H, W)
+            q, mm = self.pixels_to_nodes(x)
     
         #################################################################
         # Pixels to Nodes 
         #################################################################
-        x = x.transpose(1, 2).view(B, _N, C, T, H, W)
-        q, mm = self.pixels_to_nodes(x)
+
         B, C, T, N = q.shape
+        # q shape [B, 128, 4, 49]
+        # mm shape [B, 49, 512, 4, 8, 8]
+
+
+        view_loss=0
+        # untested attempt to minimized distance between one node from another view
+        #for i in range(49):
+        #    features = q[..., i].transpose(1,2)
+            # B x T
+        #    diff_back = torch.sum(torch.pow((features - q_back[..., 0].transpose(1,2)), 2), dim=-1)
+        #    diff_top = torch.sum(torch.pow((features - q_up[..., 0].transpose(1,2)), 2), dim=-1)
+        #    for j in range(49):
+        #        features_back = q_back[..., j].transpose(1,2)
+        #        features_top = q_up[..., j].transpose(1,2)
+        #        dist_back = torch.sum(torch.pow((features - features_back), 2),dim=-1)
+        #        dist_top = torch.sum(torch.pow((features - features_top), 2), dim=-1)
+        #        diff_back = torch.min(diff_back, dist_back)
+        #        diff_top = torch.min(diff_top, dist_top)
+        #    view_loss += torch.sum(diff_back) + torch.sum(diff_top)
+        #print(view_loss)
+        #view_loss = self.sigmoid(view_loss / B / 2)
+
+        if d!= None:
+            for i in range(49):
+                coor_x, coor_y = self.patch_index_to_pixel(i, Hd, Wd, H, W, N)
+                coor_z = d[0][..., coor_x][..., coor_y]
+                features = q[..., i].transpose(1, 2)
+                for b in range(B):
+                    for t in range(T):
+                        coor_back = utils.view_swap(coor_x, coor_y, coor_z[b][t], RT[0][b], RT[1][b], K[0][b])
+                        #coor_top = utils.view_swap(coor_x, coor_y, coor_z[b][t], RT[0][b], RT[2][b], K[0][b])
+                        index_back = self.coord_to_index(coor_back,Hd, Wd, H, W, N)
+                        #index_top = self.coord_to_index(coor_top, Hd, Wd, H, W, N)
+                        if index_back < N and index_back >= 0:
+                            view_loss += self.sigmoid(torch.dist(features[b][t], q_back[..., index_back].transpose(1, 2)[b][t], 2))
+                        #if index_top < N or index_top >= 0:
+                        #    view_loss += self.sigmoid(torch.dist(features[b][t], q_top[..., index_top].transpose(1, 2)[b][t], 2))
+            view_loss /= int(B) * int(T)
+            view_loss /= 10
 
         if just_feats:
-            h, w = np.ceil(np.array(x.shape[-2:]) / self.map_scale).astype(np.int)
+            h, w = np.ceil(np.array(x[0].shape[-2:]) / self.map_scale).astype(np.int)
             return (q, mm) if _N > 1 else (q, q.view(*q.shape[:-1], h, w))
 
         #################################################################
@@ -139,9 +214,11 @@ class CRW(nn.Module):
         walks = dict()
         As = self.affinity(q[:, :, :-1], q[:, :, 1:])
         A12s = [self.stoch_mat(As[:, i], do_dropout=True) for i in range(T-1)]
+        # As [4,3,49,49] B, T, N, M
+        # A12s[0] [4,49,49]
 
         #################################################### Palindromes
-        if not self.sk_targets:  
+        if not self.sk_targets:
             A21s = [self.stoch_mat(As[:, i].transpose(-1, -2), do_dropout=True) for i in range(T-1)]
             AAs = []
             for i in list(range(1, len(A12s))):
@@ -182,14 +259,15 @@ class CRW(nn.Module):
         #################################################################
         # Visualizations
         #################################################################
-        if (np.random.random() < 0.02) and (self.vis is not None): # and False:
+        if (np.random.random() < 1) and (self.vis is not None): # and False:
             with torch.no_grad():
-                self.visualize_frame_pair(x, q, mm)
+                self.visualize_frame_pair(x[0], q, mm)
                 if _N > 1: # and False:
-                    self.visualize_patches(x, q)
+                    self.visualize_patches(x[0], q)
 
         loss = sum(xents)/max(1, len(xents)-1)
-        
+        loss += view_loss
+        print(loss, view_loss)
         return q, loss, diags
 
     def xent_targets(self, A):
@@ -212,7 +290,8 @@ class CRW(nn.Module):
         utils.visualize.nn_patches(self.vis.vis, all_x, all_A[None])
 
     def visualize_frame_pair(self, x, q, mm):
-        t1, t2 = np.random.randint(0, q.shape[-2], (2))
+        #t1, t2 = np.random.randint(0, q.shape[-2], (2))
+        t1, t2 = 0, 1
         f1, f2 = q[:, :, t1], q[:, :, t2]
 
         A = self.affinity(f1, f2)

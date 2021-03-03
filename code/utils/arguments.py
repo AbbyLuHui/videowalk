@@ -19,7 +19,7 @@ def test_args():
     parser.add_argument('--manualSeed', type=int, default=777, help='manual seed')
 
     #Device options
-    parser.add_argument('--gpu-id', default='0', type=str,
+    parser.add_argument('--gpu-id', default='5', type=str,
                         help='id(s) for CUDA_VISIBLE_DEVICES')
     parser.add_argument('--batchSize', default=1, type=int,
                         help='batchSize')
@@ -31,6 +31,8 @@ def test_args():
                         help='spatial radius to consider neighbors from')
     parser.add_argument('--videoLen', default=20, type=int,
                         help='number of context frames')
+    parser.add_argument('--multiView', default=3, type=int,
+                        help='number of input viewpoints per scene')
 
     parser.add_argument('--cropSize', default=320, type=int,
                         help='resizing of test image, -1 for native size')
@@ -38,7 +40,7 @@ def test_args():
     parser.add_argument('--filelist', default='/scratch/ajabri/data/davis/val2017.txt', type=str)
     parser.add_argument('--save-path', default='./results', type=str)
 
-    parser.add_argument('--visdom', default=False, action='store_true')
+    parser.add_argument('--visdom', default=True, action='store_false')
     parser.add_argument('--visdom-server', default='localhost', type=str)
 
     # Model Details
@@ -126,8 +128,9 @@ def train_args():
     parser.add_argument('--img-size', default=256, type=int)
     parser.add_argument('--patch-size', default=[64, 64, 3], type=int, nargs="+")
 
-    parser.add_argument('--port', default=8095, type=int, help='visdom port')
+    parser.add_argument('--port', default=8097, type=int, help='visdom port')
     parser.add_argument('--server', default='localhost', type=str, help='visdom server')
+
 
     parser.add_argument('--model-type', default='scratch', type=str, help='scratch | imagenet | moco')
     parser.add_argument('--optim', default='adam', type=str, help='adam | sgd')
@@ -137,7 +140,7 @@ def train_args():
     parser.add_argument('--featdrop', default=0.0, type=float, help='"regular" dropout on features')
     parser.add_argument('--restrict', default=-1, type=int, help='restrict attention')
     parser.add_argument('--head-depth', default=0, type=int, help='depth of head mlp; 0 is linear')
-    parser.add_argument('--visualize', default=False, action='store_true', help='visualize with wandb and visdom')
+    parser.add_argument('--visualize', default=True, action='store_false', help='visualize with wandb and visdom')
     parser.add_argument('--remove-layers', default=[], help='layer[1-4]')
 
     # sinkhorn-knopp ideas (experimental)

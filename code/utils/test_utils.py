@@ -91,7 +91,8 @@ def dump_predictions(pred, lbl_set, img, prefix):
     
     # Argmax to get the hard label for index
     pred_lbl = np.argmax(pred_dist, axis=-1)
-    pred_lbl = np.array(lbl_set, dtype=np.int32)[pred_lbl]      
+    pred_lbl = np.array(lbl_set, dtype=np.int32)[pred_lbl]
+
     img_with_label = np.float32(img) * 0.5 + np.float32(pred_lbl) * 0.5
 
     # Visualize label distribution for object 1 (debugging/analysis)

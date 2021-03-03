@@ -6,6 +6,7 @@ import torch
 import errno
 import os
 import sys
+import numpy as np
 
 from . import arguments
 from . import visualize
@@ -166,7 +167,7 @@ class MetricLogger(object):
             data_time.update(time.time() - end)
             yield obj
             iter_time.update(time.time() - end)
-            if i % print_freq == 0:
+            if i % print_freq == 0 and False:
                 eta_seconds = iter_time.global_avg * (len(iterable) - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
                 if torch.cuda.is_available():
@@ -434,3 +435,38 @@ def im_to_torch(img):
     img = np.transpose(img, (2, 0, 1)) # C*H*W
     img = to_torch(img).float()
     return img
+
+def view_swap(x, y, z, src_RT, dst_RT, cam_K):
+    device = z.device
+    _DEPTH_CLIP = 32.0
+    z = z /255. *_DEPTH_CLIP
+    if len(z.shape) != 0:
+        z= z.flatten()
+    fx = cam_K[0, 0]
+    fy = cam_K[1, 1]
+
+    #correction = torch.tensor([[1.,0.,0.,0.],[0.,0.,-1.,0.],
+    #                           [0.,1.,0.,0.],[0.,0.,0.,1.]],dtype=torch.float64,device=device)
+
+    X = x / fx * z
+    Y = y / fy * z
+    Z = z
+    src_RT_4x4 = torch.cat([src_RT, torch.tensor([[0.,0.,0.,1.]], device=device)])
+    dst_RT_4x4 = torch.cat([dst_RT, torch.tensor([[0., 0., 0., 1.]], device=device)])
+    #src_RT_4x4 = torch.matmul(correction, src_RT_4x4)
+    #dst_RT_4x4 = torch.matmul(correction, dst_RT_4x4)
+    cam_K_3x4 = torch.cat([cam_K, torch.zeros((3,1), device=device)], dim=1)
+    cam_K_4x4 = torch.cat([cam_K_3x4, torch.tensor([[0., 0., 0., 1.]], device=device)])
+
+    point_src = torch.stack([X,Y,Z, torch.ones_like(Z)], dim=-1)
+    point_world = torch.matmul(torch.inverse(src_RT_4x4), point_src)
+    point_dst = torch.matmul(dst_RT_4x4, point_world)
+
+    # Scale 3D point by depth value back to z=1.
+    dst_z = point_dst[2]
+    point_dst[:2] /= dst_z
+    point_dst[2] = 1.
+
+    # Get 2D pixel in image space.
+    coord_dst = torch.matmul(cam_K_4x4, point_dst)
+    return coord_dst[:2]

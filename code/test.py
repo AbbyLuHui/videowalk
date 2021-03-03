@@ -17,10 +17,13 @@ from data.video import SingleVideoDataset
 import utils
 import utils.test_utils as test_utils
 
+import utils.transform_copy as transform
+
 
 def main(args, vis):
     model = CRW(args, vis=vis).to(args.device)
     args.mapScale = test_utils.infer_downscale(model)
+    print('mapscale:', args.mapScale)
 
     args.use_lab = args.model_type == 'uvc'
     dataset = (vos.VOSDataset if not 'jhmdb' in args.filelist  else jhmdb.JhmdbSet)(args)
@@ -53,6 +56,8 @@ def main(args, vis):
 
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path)
+    if not os.path.exists(args.save_path + 'video/'):
+        os.makedirs(args.save_path + 'video/')
     
     with torch.no_grad():
         test_loss = test(val_loader, model, args)
@@ -61,14 +66,23 @@ def main(args, vis):
 def test(loader, model, args):
     n_context = args.videoLen
     D = None    # Radius mask
+    videoImgs, videoHeatmaps, videoProbs, videoLbls = [], [], [], []
+    _videoHeatmaps, _videoProbs, _videoImgs, _videoLbls = [], [], [], []
+
+    input_transform = None
     
-    for vid_idx, (imgs, imgs_orig, lbls, lbls_orig, lbl_map, meta) in enumerate(loader):
+    for vid_idx, (imgs, imgs_orig, dpts, lbls, lbls_orig, lbl_map, poses, meta) in enumerate(loader):
         t_vid = time.time()
         imgs = imgs.to(args.device)
+        dpts = dpts.to(args.device)
         B, N = imgs.shape[:2]
         assert(B == 1)
 
+        if vid_idx % args.multiView == 0:
+            input_transform = poses['camera_RT']
+
         print('******* Vid %s (%s frames) *******' % (vid_idx, N))
+
         with torch.no_grad():
             t00 = time.time()
 
@@ -90,7 +104,7 @@ def test(loader, model, args):
             if args.pca_vis and vis:
                 pca_feats = [utils.visualize.pca_feats(feats[0].transpose(0, 1), K=1)]
                 for pf in pca_feats:
-                    pf = torch.nn.functional.interpolate(pf[::10], scale_factor=(4, 4), mode='bilinear')
+                    pf = torch.nn.functional.interpolate(pf[::10], scale_factor=(4, 4), mode='bilinear', align_corners=True)
                     vis.images(pf, nrow=2, env='main_pca')
                     import pdb; pdb.set_trace()
 
@@ -130,7 +144,6 @@ def test(loader, model, args):
             maps, keypts = [], []
             lbls[0, n_context:] *= 0 
             lbl_map, lbls = lbl_map[0], lbls[0]
-
             for t in range(key_indices.shape[0]):
                 # Soft labels of source nodes
                 ctx_lbls = lbls[key_indices[t]].to(args.device)
@@ -151,8 +164,10 @@ def test(loader, model, args):
                     pred[:, :, :] -= pred.min(-1)[0][:, :, None]
                     pred[:, :, :] /= pred.max(-1)[0][:, :, None]
 
-                # Save Predictions            
+                # Save Predictions
                 cur_img = imgs_orig[0, t + n_context].permute(1,2,0).numpy() * 255
+                cur_dpt = dpts[0, t+n_context]
+                _videoImgs.append(cur_img)
                 _maps = []
 
                 if 'jhmdb' in args.filelist.lower():
@@ -171,8 +186,19 @@ def test(loader, model, args):
                     pred.cpu().numpy(),
                     lbl_map, cur_img, outpath)
 
+                """
+                if vid_idx % args.multiView != 0:
+                    lbl_project = transform.multiview_project(lblmap, cur_dpt, poses['camera_K'][0][t], poses['camera_RT'][0], input_transform[0])
+                else:
+                    lbl_project = lblmap
+                print(lbl_project.shape, heatmap.shape)
+                _videoLbls.append(lbl_project) """
+
                 _maps += [heatmap, lblmap, heatmap_prob]
                 maps.append(_maps)
+                _videoHeatmaps.append(heatmap)
+                _videoProbs.append(heatmap_prob)
+
 
                 if args.visdom:
                     [vis.image(np.uint8(_m).transpose(2, 0, 1)) for _m in _maps]
@@ -185,8 +211,24 @@ def test(loader, model, args):
                 wandb.log({'blend vid%s' % vid_idx: wandb.Video(
                     np.array([m[0] for m in maps]).transpose(0, -1, 1, 2), fps=12, format="gif")})  
                 wandb.log({'plain vid%s' % vid_idx: wandb.Video(
-                    imgs_orig[0, n_context:].numpy(), fps=4, format="gif")})  
-                
+                    imgs_orig[0, n_context:].numpy(), fps=4, format="gif")})
+
+            videoHeatmaps.append(_videoHeatmaps)
+            videoImgs.append(_videoImgs)
+            videoProbs.append(_videoProbs)
+            _videoHeatmaps, _videoImgs, _videoProbs = [], [], []
+
+            if len(videoHeatmaps) == len(videoImgs) == len(videoProbs) == args.multiView == 3:
+                videorgb = []
+                for i in range(len(videoHeatmaps[0])):
+                    img_ori = np.hstack((videoImgs[0][i], videoImgs[1][i], videoImgs[2][i]))
+                    img_blend = np.hstack((videoHeatmaps[0][i], videoHeatmaps[1][i], videoHeatmaps[2][i]))
+                    img_prob = np.hstack((videoProbs[0][i], videoProbs[1][i], videoProbs[2][i]))
+                    videorgb.append(np.uint8(np.vstack((img_ori, img_blend, img_prob))))
+                print("Output video to ", args.save_path + "video/video" + str(vid_idx) + ".mp4")
+                imageio.mimwrite(args.save_path + "video/video" + str(vid_idx) + ".mp4", videorgb, fps=30, quality=8)
+                videoHeatmaps, videoImgs, videoProbs = [], [], []
+
             torch.cuda.empty_cache()
             print('******* Vid %s TOOK %s *******' % (vid_idx, time.time() - t_vid))
 
@@ -202,7 +244,7 @@ if __name__ == '__main__':
     if args.visdom:
         import visdom
         import wandb
-        vis = visdom.Visdom(server=args.visdom_server, port=8095, env='main_davis_viz1'); vis.close()
+        vis = visdom.Visdom(server=args.visdom_server, port=8097, env='main_davis_viz1'); vis.close()
         wandb.init(project='palindromes', group='test_online')
         vis.close()
 

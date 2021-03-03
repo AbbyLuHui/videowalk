@@ -1,0 +1,1 @@
+python test.py --filelist ./eval/cater_vallist.txt --model-type scratch --resume ./checkpoints/_drop0.1-len4-ftranscrop-fauggrid-optimadam-temp0.05-fdrop0.0-lr0.0001-mlp0/model_24.pth --save-path results_copy/ --topk 10 --videoLen 20 --radius 12 --temperature 0.05 --cropSize -1 --multiView 3

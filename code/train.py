@@ -14,6 +14,7 @@ import data
 from data.kinetics import Kinetics400
 from data.video import VideoList
 from torchvision.datasets.samplers.clip_sampler import RandomClipSampler, UniformClipSampler
+from data.multiview import GreaterList
 
 import utils
 from model import CRW
@@ -27,12 +28,14 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
     metric_logger.add_meter('clips/s', utils.SmoothedValue(window_size=10, fmt='{value:.3f}'))
 
     header = 'Epoch: [{}]'.format(epoch)
-
-    for step, (video, orig) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    #
+    for step, (imgs, depths, poses_RT, poses_K) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         start_time = time.time()
-
-        video = video.to(device)
-        output, loss, diagnostics = model(video)
+        #B, V, T, NC, H, W = imgs.shape
+        #_N, C = NC // 3, 3
+        imgs, depths = imgs.to(device), depths.to(device)
+        poses_RT, poses_K = poses_RT.to(device), poses_K.to(device)
+        output, loss, diagnostics = model(imgs, depths, poses_RT, poses_K)
         loss = loss.mean()
 
         if vis is not None and np.random.random() < 0.01:
@@ -49,7 +52,7 @@ def train_one_epoch(model, optimizer, lr_scheduler, data_loader, device, epoch, 
         optimizer.step()
 
         metric_logger.update(loss=loss.item(), lr=optimizer.param_groups[0]["lr"])
-        metric_logger.meters['clips/s'].update(video.shape[0] / (time.time() - start_time))
+        metric_logger.meters['clips/s'].update(imgs.shape[0] / (time.time() - start_time))
         lr_scheduler.step()
 
     checkpoint_fn()
@@ -63,7 +66,7 @@ def _get_cache_path(filepath):
 
 def collate_fn(batch):
     # remove audio from the batch
-    batch = [d[0] for d in batch]
+    #batch = [d[0] for d in batch]
     return default_collate(batch)
 
 def main(args):
@@ -101,6 +104,13 @@ def main(args):
             return torchvision.datasets.ImageFolder(
                 root=args.data_path,
                 transform=_transform)
+        elif 'cater' in args.data_path.lower():
+            return GreaterList(filelist=args.data_path,
+                clip_len=args.clip_len,
+                is_train=is_train,
+                frame_gap=args.frame_skip,
+                transform=_transform,
+                random_clip=True)
         else:
             return VideoList(
                 filelist=args.data_path,
@@ -143,16 +153,19 @@ def main(args):
     print("Creating data loaders")
     train_sampler = make_data_sampler(True, dataset)
 
+
     data_loader = torch.utils.data.DataLoader(
         dataset, batch_size=args.batch_size, # shuffle=not args.fast_test,
         sampler=train_sampler, num_workers=args.workers//2,
         pin_memory=True, collate_fn=collate_fn)
+
     
     vis = utils.visualize.Visualize(args) if args.visualize else None
 
     print("Creating model")
     model = CRW(args, vis=vis).to(device)
     print(model)
+    print(os.environ['CUDA_VISIBLE_DEVICES'])
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 

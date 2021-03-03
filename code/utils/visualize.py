@@ -93,7 +93,7 @@ class Visualize(object):
         self.vis = visdom.Visdom(
             port=args.port,
             server='http://%s' % args.server,
-            env=self._env_name,
+            env=self._env_name
         )
         self.args = args
 
@@ -131,12 +131,11 @@ def nn_patches(vis, P, A_k, prefix='', N=10, K=20):
     A = np.sort(A_k, axis=-1)
     I = np.argsort(-A_k, axis=-1)
     
-    vis.text('', opts=dict(width=10000, height=1), win='%s_patch_header' %(prefix))
-
+    #vis.text('', opts=dict(width=10000, height=1), win='%s_patch_header' %(prefix))
     for n,i in enumerate(np.random.permutation(P.shape[0])[:N]):
-        p = P[i]
-        vis.text('', opts=dict(width=10000, height=1), win='%s_patch_header_%s' % (prefix, n))
-        # vis.image(p,  win='%s_patch_query_%s' % (prefix, n))
+        #p=P[i]
+        #vis.text('', opts=dict(width=10000, height=1), win='%s_patch_header_%s' % (prefix, n))
+        #vis.image(p,  win='%s_patch_query_%s' % (prefix, n))
 
         for k in range(I.shape[0]):
             vis.images(P[I[k, i, :K]], nrow=min(I.shape[-1], 20), win='%s_patch_values_%s_%s' % (prefix, n, k))
@@ -206,7 +205,7 @@ def frame_pair(x, ff, mm, t1, t2, A, AA, xent_loss, viz):
         ff1 , ff2 = spatialize(f1), spatialize(f2)
 
         xx = torch.stack([x1, x2]).detach().cpu()
-        viz.images(xx, win='imgs')
+        #viz.images(xx, win='imgs')
 
         # Flow
         u, v = compute_flow(A[0:1])
@@ -220,7 +219,7 @@ def frame_pair(x, ff, mm, t1, t2, A, AA, xent_loss, viz):
         # # PCA VIZ
         pca_ff = pca_feats(torch.stack([ff1,ff2]).detach().cpu())
         pca_ff = make_gif(pca_ff, outname=None)
-        viz.images(pca_ff.transpose(0, -1, 1, 2), win='pcafeats', opts=dict(title=f"{t1} {t2}"))
+        #viz.images(pca_ff.transpose(0, -1, 1, 2), win='pcafeats', opts=dict(title=f"{t1} {t2}"))
 
     else:  # Patches as input
         # X here is B x N x C x T x H x W
