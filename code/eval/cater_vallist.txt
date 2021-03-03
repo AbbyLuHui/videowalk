@@ -1,0 +1,10 @@
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000075/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000076/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000077/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000078/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000079/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000080/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000081/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000082/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000083/
+/proj/vondrick/datasets/CATER/GREATER_multi_fbb/val/GREATER_000084/

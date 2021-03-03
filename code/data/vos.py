@@ -116,14 +116,21 @@ class VOSDataset(torch.utils.data.Dataset):
         f = open(self.filelist, 'r')
         self.jpgfiles = []
         self.lblfiles = []
+        self.dptfiles = []
+        self.posfiles = []
 
         for line in f:
-            rows = line.split()
-            jpgfile = rows[0]
-            lblfile = rows[1]
-
-            self.jpgfiles.append(jpgfile)
-            self.lblfiles.append(lblfile)
+            #rows = line.split()
+            #jpgfile = rows[0]
+            #lblfile = rows[1]
+            filedir = line.strip()
+            for i in range(args.multiView):
+                imgdir = filedir + 'images_view' + str(i+1) + '/'
+                posedir = filedir + 'poses_view' + str(i+1) + '/'
+                self.jpgfiles.append(imgdir)
+                self.lblfiles.append(imgdir)
+                self.dptfiles.append(imgdir)
+                self.posfiles.append(posedir)
 
         f.close()
     
@@ -135,52 +142,91 @@ class VOSDataset(torch.utils.data.Dataset):
             return None
     
 
-    def make_paths(self, folder_path, label_path):
-        I, L = os.listdir(folder_path), os.listdir(label_path)
-        L = [ll for ll in L if 'npy' not in ll]
+    def make_paths(self, folder_path, label_path, depth_path):
+        #I, L = os.listdir(folder_path), os.listdir(label_path)
+        #L = [ll for ll in L if 'npy' not in ll]
+        I = [ll for ll in os.listdir(folder_path) if '.png' in ll and '_' not in ll]
+        L = [ll for ll in os.listdir(label_path) if '_flat.png' in ll]
+        D = [ll for ll in os.listdir(depth_path) if '_depth.png' in ll]
+
 
         frame_num = len(I) + self.videoLen
         I.sort(key=lambda x:int(x.split('.')[0]))
-        L.sort(key=lambda x:int(x.split('.')[0]))
+        L.sort(key=lambda x:int(x.split('_')[0]))
+        D.sort(key=lambda x: int(x.split('_')[0]))
 
-        I_out, L_out = [], []
+        I_out, L_out, D_out = [], [], []
 
         for i in range(frame_num):
             i = max(0, i - self.videoLen)
             img_path = "%s/%s" % (folder_path, I[i])
             lbl_path = "%s/%s" % (label_path,  L[i])
+            dpt_path = "%s/%s" % (depth_path, D[i])
 
             I_out.append(img_path)
             L_out.append(lbl_path)
+            D_out.append(dpt_path)
 
-        return I_out, L_out
+        return I_out, L_out, D_out
 
 
     def __getitem__(self, index):
 
         folder_path = self.jpgfiles[index]
         label_path = self.lblfiles[index]
+        depth_path = self.dptfiles[index]
+        pose_path = self.posfiles[index]
 
         imgs = []
         imgs_orig = []
         lbls = []
+        dpts = []
+        poses = {}
         lbls_onehot = []
         patches = []
         target_imgs = []
 
-        frame_num = len(os.listdir(folder_path)) + self.videoLen
+        camera_K = np.load(pose_path + 'camera_K.npy')
+        #camera_RT = np.load(pose_path + 'camera_RT.npy')
+        if index % 3 == 2:
+            camera_RT = np.array([[ 1.79110616e-01, -9.83829021e-01, -2.65026210e-06,
+          4.24041937e-05], [-9.83828604e-01, -1.79110542e-01, -9.13496129e-04,
+          1.46159381e-02], [ 8.98249215e-04,  1.66224301e-04, -9.99999583e-01,
+          1.59999933e+01]])
+        elif index % 3 == 1:
+            camera_RT = np.array([[ 2.17085370e-04, -1.00000000e+00, -5.45359349e-08,
+          2.60546082e-03],
+        [-5.54187894e-01, -1.20257995e-04, -8.32391620e-01,
+          8.87823105e-03],
+        [ 8.32391560e-01,  1.80735282e-04, -5.54187894e-01,
+          1.44222021e+01]])
+        elif index % 3 == 0:
+            camera_RT = np.array([[ 2.17576671e-04,  1.00000012e+00, -6.95432760e-08,
+         -2.61036376e-03],
+        [ 5.55105150e-01, -1.20769437e-04, -8.31780374e-01,
+         -7.01856613e-03],
+        [-8.31780374e-01,  1.81061376e-04, -5.55104971e-01,
+          1.44222040e+01]])
+        poses['camera_K'] = camera_K
+        poses['camera_RT'] = camera_RT
+
+        #frame_num = len(os.listdir(folder_path)) + self.videoLen
 
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-        img_paths, lbl_paths = self.make_paths(folder_path, label_path)
+        img_paths, lbl_paths, dpt_paths = self.make_paths(folder_path, label_path, depth_path)
+        print(len(img_paths), len(lbl_paths), len(dpt_paths), folder_path)
+        frame_num = len(img_paths)
 
         t000 = time.time()
 
         for i in range(frame_num):
             t00 = time.time()
 
-            img_path, lbl_path = img_paths[i], lbl_paths[i]
+            img_path, lbl_path, dpt_path = img_paths[i], lbl_paths[i], dpt_paths[i]
             img = load_image(img_path)  # CxHxW
             lblimg = cv2.imread(lbl_path)
+            dptimg = cv2.imread(dpt_path, cv2.IMREAD_GRAYSCALE)
+            #dptimg /= 1000
 
             ht, wd = img.size(1), img.size(2)
             if self.imgSize > 0:
@@ -200,6 +246,7 @@ class VOSDataset(torch.utils.data.Dataset):
                     neww = self.imgSize
 
                 lblimg = cv2.resize(lblimg, (newh, neww), cv2.INTER_NEAREST)
+                dptimg = cv2.resize(dptimg, (newh, neww), cv2.INTER_NEAREST)
 
             img_orig = img.clone()
 
@@ -216,9 +263,10 @@ class VOSDataset(torch.utils.data.Dataset):
             imgs_orig.append(img_orig)
             imgs.append(img)
             lbls.append(lblimg.copy())
+            dpts.append(dptimg.copy())
             
         # Meta info
-        meta = dict(folder_path=folder_path, img_paths=img_paths, lbl_paths=lbl_paths)
+        meta = dict(folder_path=folder_path, img_paths=img_paths, lbl_paths=lbl_paths, dpt_path = dpt_paths)
 
         ########################################################
         # Load reshaped label information (load cached versions if possible)
@@ -281,12 +329,13 @@ class VOSDataset(torch.utils.data.Dataset):
         
         imgs = torch.stack(imgs)
         imgs_orig = torch.stack(imgs_orig)
+        dpts = np.stack(dpts)
         lbls_tensor = torch.from_numpy(np.stack(lbls))
         lbls_resize = np.stack(resizes)
 
         assert lbls_resize.shape[0] == len(meta['lbl_paths'])
 
-        return imgs, imgs_orig, lbls_resize, lbls_tensor, lblset, meta
+        return imgs, imgs_orig, dpts, lbls_resize, lbls_tensor, lblset, poses, meta
 
     def __len__(self):
         return len(self.jpgfiles)

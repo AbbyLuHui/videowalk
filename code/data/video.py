@@ -61,7 +61,8 @@ class VideoList(data.Dataset):
         else:
             startframe = 0
 
-        files = os.listdir(folder_path)
+        allfiles = os.listdir(folder_path)
+        files = [f for f in allfiles if '_' not in f]
         files.sort(key=lambda x:int(x.split('.')[0]))
         
         imgs = []

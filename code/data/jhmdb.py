@@ -140,9 +140,10 @@ class JhmdbSet(torch.utils.data.Dataset):
         self.lblfiles = []
 
         for line in f:
-            rows = line.split()
-            jpgfile = rows[0]
-            lblfile = rows[1]
+            #rows = line.split()
+            #jpgfile = rows[0]
+            #lblfile = rows[1]
+            jpgfile = lblfile = line
 
             self.jpgfiles.append(jpgfile)
             self.lblfiles.append(lblfile)
@@ -158,7 +159,7 @@ class JhmdbSet(torch.utils.data.Dataset):
     
 
     def make_paths(self, folder_path, label_path):
-        I = [ ll for ll in os.listdir(folder_path) if '.png' in ll ]
+        I = [ ll for ll in os.listdir(folder_path) if '.png' in ll and '_' not in ll]
 
         frame_num = len(I) + self.videoLen
         I.sort(key=lambda x:int(x.split('.')[0]))
@@ -229,6 +230,7 @@ class JhmdbSet(torch.utils.data.Dataset):
         rsz_h, rsz_w = math.ceil(img.size(1) / self.mapScale[0]), math.ceil(img.size(2) /self.mapScale[1])
 
         lbls_mat = sio.loadmat(label_path)
+        print(lbls_mat.shape, lbls_mat)
 
         lbls_coord = lbls_mat['pos_img']
         lbls_coord = lbls_coord - 1
